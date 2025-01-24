@@ -1,0 +1,202 @@
+# I am importing the necessary libraries.
+
+import tensorflow as tf
+from tensorflow.keras.layers import Dense
+from tensorflow.keras.layers import LSTM
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import pandas_datareader.data as web
+import datetime
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dropout
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import r2_score
+from sklearn.metrics import mean_squared_error
+from sklearn.model_selection import RandomizedSearchCV
+from keras.wrappers.scikit_learn import KerasRegressor
+from tensorflow.keras.callbacks import TensorBoard
+from keras.callbacks import History
+
+# I am setting the date range for downloading the data.
+start = datetime.datetime(2020,1,1)
+end = datetime.datetime(2024,12,30)
+
+
+# I am downloading the necessary data from the Stooq website and Federal Reserve databases.
+
+y_small_caps = web.get_data_stooq('IWM', start, end)
+
+
+y_small_caps = pd.DataFrame(y_small_caps[::-1]['Close'])
+
+
+x_msci_us = web.get_data_stooq('MSCI.US', start, end)
+
+
+x_msci_us = pd.DataFrame(x_msci_us[::-1]['Close'])
+
+
+x_oil = web.get_data_fred('DCOILBRENTEU', start, end)
+x_bonds = web.get_data_fred('DAAA', start, end)
+x_inflation = web.get_data_fred('T10YIE', start, end)
+x_gas = web.get_data_fred('DHHNGSP', start, end)
+
+
+# I am converting the data to numpy arrays for further processing.
+
+y_small_caps = y_small_caps.values
+x_msci_us = x_msci_us.values
+x_oil = x_oil.values
+x_inflation = x_inflation.values
+x_gas = x_gas.values
+x_bonds = x_bonds.values
+
+# I am generating weekly date ranges and appending them to one list.
+
+list1=0
+j = 0
+for i in range(0, len(pd.date_range(start, end)),7):
+        list1.append(pd.date_range(start, end)[j:(j+5)])
+        j = j+7
+
+
+# I am adding all dates to a single list.
+
+all_dates = []
+for dt_index in list1:
+    all_dates.extend(dt_index)
+
+df1 = pd.DataFrame(all_dates, columns=['date'])
+df1 = df.iloc[1:1257,]
+
+
+# I am creating a combined dataframe with all the variables.
+
+dataframe = pd.concat([df1, pd.DataFrame(x_oil[1:1257]), pd.DataFrame(x_inflation[1:1257]), pd.DataFrame(x_gas[1:1257]), pd.DataFrame(x_bonds[1:1257]),pd.DataFrame(x_msci_us[:1256]),pd.DataFrame(y_small_caps)], axis=1)
+
+
+
+# I am truncating the data to ensure consistent lengths and avoid NaN values at the end.
+
+data = dataframe[0:1255]
+
+
+y_small_caps = data.iloc[1:,6]/data.iloc[:,6][1]
+
+dataframe = pd.concat([df, pd.DataFrame(x_oil[1:1257]), pd.DataFrame(x_inflation[1:1257]), pd.DataFrame(x_gas[1:1257]), pd.DataFrame(x_bonds[1:1257]),pd.DataFrame(x_msci_us[1:1256]),pd.DataFrame(y_small_caps)], axis=1)
+
+
+
+dataframe = dataframe[1:1254]
+dataframe.columns = ['date', 'x_oil', 'x_inflation' , 'x_gas', 'x_bonds', 'x_msci_us', 'y_small_caps']
+
+dataframe.reset_index(drop=True, inplace=True)
+
+
+# I am scaling the data between 0 and 1, which is a standard practice in deep learning.
+scaler = MinMaxScaler(feature_range=[0,1])
+scaled_data = scaler.fit_transform(dataframe.iloc[:, 1:7])
+
+
+# I am creating the input (X) and target (y) variables for the LSTM model.
+X, y = [], []
+sequence = 60
+
+
+# I am preparing the data to include dependencies on previous time steps (long-term memory).
+for i in range(sequence, len(scaled_data)):
+    X.append(scaled_data[i-sequence:i, 0:4])
+    y.append(scaled_data[i, 5])
+
+X = np.array(X)
+y = np.array(y)
+
+# I am replacing NaN values in the data with the median to ensure compatibility.
+median_value_X  = np.nanmedian(X)
+X = np.where(np.isnan(X), median_value_X, X)
+
+median_value_y  = np.nanmedian(y)
+y = np.where(np.isnan(y), median_value_y, y)
+
+# I am splitting the data into training and testing sets.
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = 0.3, random_state=42)
+
+
+
+# I am defining the LSTM model structure.
+def LSTM_model(neurons, neurons2, dropout,dropout2, optimizer): 
+        model = Sequential([
+               LSTM(neurons, return_sequences=True, input_shape = (sequence, 4)),
+               Dropout(dropout), 
+               LSTM(neurons2),
+               Dropout(dropout2), 
+               Dense(1)
+        ])
+        model.compile(optimizer = optimizer, loss= 'mse')
+        return model
+
+
+
+
+
+# I am using RandomizedSearchCV to optimize the hyperparameters of the LSTM model.
+
+params = {
+    'neurons': [60, 80, 100, 120],
+    'neurons2': [60, 80, 100, 120],
+    'dropout': [0.1, 0.2],
+    'dropout2': [0.1, 0.2],
+    'batch_size': [24, 32],
+    'epochs': [30, 40, 50],
+    'optimizer': ['adam']
+}
+
+
+model = KerasRegressor(LSTM_model, verbose=0)
+
+
+
+Random_search = RandomizedSearchCV(model, params, n_iter=15)
+Random_search.fit(X_train, y_train)
+
+# I am retrieving the best model and hyperparameters.
+best_model = Random_search.best_estimator_.model
+Random_search.best_params_
+
+# I am creating the final LSTM model with optimal hyperparameters.
+model_final = LSTM_model(120, 120, 0.1,0.1, 'adam')
+
+
+# I am fitting the final model to the training data.
+best_model_fitted = model_final.fit(X_train, y_train, epochs = 50, batch_size=32)
+
+
+
+# I am making predictions using the trained model.
+prediction = model_final.predict(X_test)
+
+# I am calculating the mean squared error and R-squared score to evaluate the model's performance.
+
+mean_squared_error(prediction, y_test)
+
+
+r2_score(prediction, y_test)
+
+# I am plotting the training loss history over the epochs.
+plt.plot(best_model_fitted.history['loss'])
+plt.xlabel('epochs')
+plt.ylabel('loss')
+
+
+
+
+
+
+
+
+
+
+
+
