@@ -1,9 +1,9 @@
 # I am importing the necessary libraries.
 
+import numpy as np
 import tensorflow as tf
 from tensorflow.keras.layers import Dense
 from tensorflow.keras.layers import LSTM
-import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import pandas_datareader.data as web
@@ -14,10 +14,11 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score
 from sklearn.metrics import mean_squared_error
-from sklearn.model_selection import RandomizedSearchCV
+from sklearn.model_selection import RandomizedSearchCV, KFold
 from keras.wrappers.scikit_learn import KerasRegressor
 from tensorflow.keras.callbacks import TensorBoard
 from keras.callbacks import History
+
 
 # I am setting the date range for downloading the data.
 start = datetime.datetime(2020,1,1)
@@ -83,10 +84,7 @@ dataframe = pd.concat([df1, pd.DataFrame(x_oil[1:1257]), pd.DataFrame(x_inflatio
 data = dataframe[0:1255]
 
 
-y_small_caps = data.iloc[1:,6]/data.iloc[:,6][1]
-
-dataframe = pd.concat([df, pd.DataFrame(x_oil[1:1257]), pd.DataFrame(x_inflation[1:1257]), pd.DataFrame(x_gas[1:1257]), pd.DataFrame(x_bonds[1:1257]),pd.DataFrame(x_msci_us[1:1256]),pd.DataFrame(y_small_caps)], axis=1)
-
+dataframe = pd.concat([df1, pd.DataFrame(x_oil[0:1257]), pd.DataFrame(x_inflation[0:1257]), pd.DataFrame(x_gas[0:1257]), pd.DataFrame(x_bonds[0:1257]),pd.DataFrame(x_msci_us[0:1256]),pd.DataFrame(y_small_caps)], axis=1)
 
 
 dataframe = dataframe[1:1254]
@@ -119,9 +117,11 @@ X = np.where(np.isnan(X), median_value_X, X)
 
 median_value_y  = np.nanmedian(y)
 y = np.where(np.isnan(y), median_value_y, y)
+y = np.array(y).reshape(-1)
 
-# I am splitting the data into training and testing sets.
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = 0.3, random_state=42)
+# I am splitting the data into training,validaton and testing sets.
+X_train, X_temp, y_train, y_temp = train_test_split(X, y, test_size=0.3, random_state=42)
+X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=42)
 
 
 
@@ -156,26 +156,43 @@ params = {
 
 model = KerasRegressor(LSTM_model, verbose=0)
 
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
 
 
-Random_search = RandomizedSearchCV(model, params, n_iter=15)
+Random_search = RandomizedSearchCV(model, params, n_iter=15, cv= kf, scoring = 'r2')
+
 Random_search.fit(X_train, y_train)
 
 # I am retrieving the best model and hyperparameters.
-best_model = Random_search.best_estimator_.model
 Random_search.best_params_
 
+val_score = Random_search.best_estimator_.score(X_val, y_val)
+val_score
+
+
 # I am creating the final LSTM model with optimal hyperparameters.
-model_final = LSTM_model(120, 120, 0.1,0.1, 'adam')
+model_final = LSTM_model(20, 40, 0.3,0.2, 'adam')
 
 
 # I am fitting the final model to the training data.
-best_model_fitted = model_final.fit(X_train, y_train, epochs = 50, batch_size=32)
+best_model_fitted = model_final.fit(X_train, y_train, epochs = 40, batch_size=24)
 
+
+# I am validating my model.
+validation = model_final.predict(X_val)
+r2_val = r2_score(y_val, validation)
+mse_val = mean_squared_error(y_val, validation)
+
+r2_val 
+mse_val
+# Both scores are great - they are simmilar to predictions.
 
 
 # I am making predictions using the trained model.
 prediction = model_final.predict(X_test)
+mean_squared_error(prediction, y_test)
+
+
 
 # I am calculating the mean squared error and R-squared score to evaluate the model's performance.
 
