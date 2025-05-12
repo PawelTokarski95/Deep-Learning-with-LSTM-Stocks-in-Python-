@@ -1,5 +1,8 @@
 # Deep-Learning-with-LSTM-Stocks-in-Python-
 
+- **Language**: Python
+
+
 The purpose of this project was to create an LSTM model based on economic data from financial markets, including:
 
 -Oil
